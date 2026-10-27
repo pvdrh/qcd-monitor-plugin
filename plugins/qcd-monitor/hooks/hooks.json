@@ -1,0 +1,4 @@
+{"hooks": {
+  "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "python", "args": ["-I", "-S", "${CLAUDE_PLUGIN_ROOT}/scripts/qcd_hook.py"], "timeout": 30}]}],
+  "PostToolBatch": [{"hooks": [{"type": "command", "command": "python", "args": ["-I", "-S", "${CLAUDE_PLUGIN_ROOT}/scripts/qcd_hook.py"], "timeout": 30}]}]
+}}

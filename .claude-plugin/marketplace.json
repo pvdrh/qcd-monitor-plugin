@@ -1,0 +1,13 @@
+{
+  "name": "qcd-monitor",
+  "owner": {
+    "name": "duypv"
+  },
+  "plugins": [
+    {
+      "name": "qcd-monitor",
+      "source": "./plugins/qcd-monitor",
+      "description": "Gi\u00e1m s\u00e1t online run c\u1ee7a coding agent"
+    }
+  ]
+}

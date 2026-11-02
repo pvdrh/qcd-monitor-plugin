@@ -189,7 +189,10 @@ Thư mục: `~/.claude/plugins/data/qcd-monitor-qcd-monitor/`. Trên Windows là
   - bỏ qua tool call bên trong subagent;
   - không dùng lời của agent, chỉ dùng tool call;
   - mới thử trên Windows.
-- **Python:** model lưu bằng `marshal` của Python 3.10. Bản Python khác chưa được kiểm.
+- **Python:** plugin mới chạy thử với Python 3.10.0 trên Windows 10. Các bản khác, cũ hơn hay mới hơn, chưa được kiểm.
+  - Model lưu bằng `marshal` của Python 3.10. Theo [tài liệu Python](https://docs.python.org/3/library/marshal.html), định dạng `marshal` có thể đổi giữa các phiên bản.
+  - Nếu Python của bạn không đọc được file model, hook bỏ qua lỗi (mục [Khi có sự cố](#khi-có-sự-cố)). Khi đó plugin không chấm điểm, không báo động và không hiện gì: trông như vẫn chạy nhưng thật ra không theo dõi.
+  - Cách nhận ra: sau một prompt có tool call, `/qcd-status` vẫn báo `0 step`, và trường `error` của dòng log `PostToolBatch` không rỗng.
 
 ## Dữ liệu train và điều khoản
 

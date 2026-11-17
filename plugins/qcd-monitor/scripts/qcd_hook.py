@@ -1,6 +1,7 @@
 """Hook của plugin qcd-monitor (design P5 §4): UserPromptSubmit mở run mới; PostToolBatch cập nhật CUSUM và báo động theo chế độ.
 
-Fail-open: mọi lỗi → ghi log, thoát 0, stdout rỗng. Chỉ thư viện chuẩn. Log không ghi nội dung code, lệnh hay prompt.
+Fail-open: mọi lỗi → ghi log, thoát 0, stdout rỗng; riêng sự cố làm mất giám sát (model, ruff) có thông báo systemMessage một lần mỗi phiên.
+Chỉ thư viện chuẩn. Log không ghi nội dung code, lệnh hay prompt.
 """
 import time
 
@@ -31,8 +32,30 @@ INF = float("inf")
 STATE_TTL_DAYS = 7
 
 
+NOTES = {"ruff": "qcd-monitor: không dùng được ruff 0.15.12 (thiếu hoặc khác bản); 5 đặc trưng lint bị bỏ trống, ngưỡng không còn khớp với lúc hiệu chỉnh.",
+         "model": "qcd-monitor: không nạp được model; plugin không chấm điểm và không báo động. Xem mục Xử lý sự cố trong README."}
+
+
 def _model_dir(env):
     return pathlib.Path(env.get("QCD_MODEL_DIR") or ROOT / "model")
+
+
+def _trees(env, data, meta):
+    """Model compact. m1.json không phụ thuộc bản Python; bản marshal do chính Python đang chạy ghi vào cache để nạp nhanh (≈2 ms so với ≈14 ms)."""
+    cache = data / "cache" / f"m1-{meta['sha256'][:16]}-{sys.implementation.cache_tag}.bin"
+    try:
+        return marshal.loads(cache.read_bytes())
+    except (OSError, ValueError, EOFError, TypeError):  # chưa có hoặc hỏng → đọc lại JSON
+        pass
+    trees = json.loads((_model_dir(env) / "m1.json").read_text(encoding="utf-8"))
+    try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cache.with_suffix(f".{os.getpid()}.tmp")  # tên riêng: hai hook ghi cùng lúc không trộn byte
+        tmp.write_bytes(marshal.dumps(trees))
+        os.replace(tmp, cache)
+    except OSError:
+        pass
+    return trees
 
 
 class _Subagent(Exception):
@@ -69,9 +92,18 @@ def _purge_old(sdir, keep):
 
 def _new_state(run, prompt, old=None):
     st = {"run": run, "k": 0, "w": 0.0, "alarm": None, "tracker": Tracker(prompt)}
-    if old and "ruff_ok" in old:
-        st["ruff_ok"] = old["ruff_ok"]  # kiểm ruff một lần mỗi phiên
+    for key in ("ruff_ok", "warned"):  # kiểm ruff và thông báo sự cố một lần mỗi phiên
+        if old and key in old:
+            st[key] = old[key]
     return st
+
+
+def _note(st, key):
+    """→ thông báo cho người dùng nếu sự cố `key` chưa được báo trong phiên, rồi đánh dấu đã báo."""
+    if key in st.setdefault("warned", []):
+        return ""
+    st["warned"].append(key)
+    return NOTES[key]
 
 
 def _ruff(st):
@@ -127,7 +159,8 @@ def prelint(steps):
 def status_text(st, meta, mode, alpha):
     h = meta["thresholds"][alpha][0]
     return (f"qcd-monitor status: run {st['run']}, {st['k']} step, W = {st['w']:.3f}, h = {h:.3f} (α = {alpha}), "
-            f"báo động: {'step ' + str(st['alarm']) if st['alarm'] else 'chưa'}, chế độ {mode}, model {meta['variant']} {meta['sha256'][:12]}")
+            f"báo động: {'step ' + str(st['alarm']) if st['alarm'] else 'chưa'}, chế độ {mode}, model {meta['variant']} {meta['sha256'][:12]}"
+            + "".join(f"\n{NOTES[k]}" for k in st.get("warned", [])))
 
 
 def main(stdin_text, env):
@@ -169,14 +202,18 @@ def main(stdin_text, env):
                     st["w"] = float(st["k"])
                     rec["ws"].append(st["w"])
                 p = {}
-            steps = claude_code.batch_steps(p) if p else []
+            steps, note = claude_code.batch_steps(p) if p else [], ""
             if p:
                 if _ruff(st):
                     prelint(steps)
+                elif st.get("ruff_ok") is False:  # chỉ khi chắc chắn thiếu/khác bản, không báo lỗi tạm thời
+                    note = _note(st, "ruff")
             rec["t_lint_ms"] = (time.perf_counter() - t) * 1000
-            blob = (_model_dir(env) / "m1.bin").read_bytes() if p else None
             t = time.perf_counter()
-            trees = marshal.loads(blob) if p else None
+            try:
+                trees = _trees(env, data, meta) if p else None
+            except Exception as e:  # vẫn fail-open, nhưng ghi state để chỉ báo một lần mỗi phiên
+                rec["error"], trees, steps, note = type(e).__name__, None, [], _note(st, "model")
             rec["t_model_ms"] = (time.perf_counter() - t) * 1000
             h = meta["thresholds"][alpha]
             if env.get("QCD_TEST_FORCE_ALARM") == "1":  # chỉ để thử warn/strict (design §4.4); ghi vào log
@@ -194,10 +231,14 @@ def main(stdin_text, env):
                     st["alarm"] = newly = st["k"]
             rec["t_feat_ms"], rec["t_score_ms"] = tf * 1000, ts * 1000
             msg = f"qcd-monitor: báo động ở step {newly} của run (W = {st['w']:.2f} > h = {h[0]:.2f}, α = {alpha})"
+            obj = {}
             if newly and mode == "warn":
-                out = json.dumps({"systemMessage": msg, "hookSpecificOutput": {"hookEventName": "PostToolBatch", "additionalContext": msg}})
+                obj = {"systemMessage": msg, "hookSpecificOutput": {"hookEventName": "PostToolBatch", "additionalContext": msg}}
             elif newly and mode == "strict":
-                out = json.dumps({"continue": False, "stopReason": msg})
+                obj = {"continue": False, "stopReason": msg}
+            if note:  # thông báo sự cố chỉ cho người dùng, không vào ngữ cảnh agent
+                obj["systemMessage"] = note + ("\n" + obj["systemMessage"] if "systemMessage" in obj else "")
+            out = json.dumps(obj) if obj else ""
         if st is not None:
             t = time.perf_counter()
             _write(spath, {**st, "tracker": st["tracker"].to_dict()})

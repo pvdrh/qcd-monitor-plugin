@@ -3,7 +3,7 @@
 **qcd-monitor** là plugin cho Claude Code. Plugin theo dõi các tool call của agent trong từng lượt prompt và báo động khi chuỗi tool call có dấu hiệu giống các run thất bại. Mọi tính toán chạy cục bộ: plugin không gọi LLM và không gửi dữ liệu ra ngoài.
 
 > [!WARNING]
-> **Bản nghiên cứu 0.1.0.** Báo động là một tín hiệu thống kê về kết cục của cả run, không phải kết luận rằng code sai. Tỷ lệ báo động giả mới được kiểm trên một tổ hợp dữ liệu duy nhất. Hãy đọc mục [Giới hạn](#giới-hạn) trước khi dựa vào plugin.
+> **Bản nghiên cứu 0.2.0.** Báo động là một tín hiệu thống kê về kết cục của cả run, không phải kết luận rằng code sai. Tỷ lệ báo động giả mới được kiểm trên một tổ hợp dữ liệu duy nhất. Hãy đọc mục [Giới hạn](#giới-hạn) trước khi dựa vào plugin.
 
 ## Tính năng chính
 
@@ -11,6 +11,7 @@
 - **Ba chế độ phản ứng:** `observe` (chỉ ghi log), `warn` (cảnh báo), `strict` (dừng agent).
 - **Ngưỡng có hiệu chỉnh:** chọn mức báo động giả danh nghĩa α là `0.1` hoặc `0.05`.
 - **Fail-open:** lỗi bên trong hook không chặn agent.
+- **Báo khi không theo dõi đầy đủ:** không nạp được model hoặc không dùng được ruff thì hiện thông báo, mỗi sự cố một lần trong phiên.
 - **Lệnh `/qcd-status`:** xem trạng thái của run hiện tại.
 
 ## Cách hoạt động
@@ -28,9 +29,9 @@
 | Thành phần | Yêu cầu |
 |---|---|
 | Claude Code | ≥ 2.1.283 |
-| Python | Lệnh `python` trên PATH. Đã kiểm với Python 3.10.0; các bản khác chưa kiểm (xem [Giới hạn](#giới-hạn)). |
+| Python | Lệnh `python` trên PATH, trỏ tới Python 3. Đã kiểm với Python 3.10, 3.12 và 3.13. Hook chỉ dùng thư viện chuẩn. |
 | ruff | Đúng bản 0.15.12, trên PATH. Nếu thiếu, plugin vẫn chạy nhưng 5 đặc trưng lint bị bỏ trống và ngưỡng không còn khớp với lúc hiệu chỉnh. |
-| Hệ điều hành | Mới kiểm trên Windows 10. |
+| Hệ điều hành | Mới kiểm trên Windows 10. macOS và Linux chưa kiểm (xem ghi chú bên dưới). |
 
 Kiểm tra môi trường:
 
@@ -41,6 +42,13 @@ ruff --version            # phải in ra: ruff 0.15.12
 ```
 
 Trên Windows, nếu `python --version` mở Microsoft Store, hãy tắt lối tắt tại *Settings → Apps → Advanced app settings → App execution aliases*.
+
+**macOS và Linux:** hook gọi đúng lệnh `python`, trong khi nhiều máy chỉ có `python3`. Nếu `python --version` báo không tìm thấy lệnh, hãy cho `python` trỏ tới Python 3, ví dụ:
+
+```bash
+sudo apt install python-is-python3          # Debian, Ubuntu
+ln -s "$(command -v python3)" ~/.local/bin/python   # cách chung; ~/.local/bin phải có trên PATH của Claude Code
+```
 
 ## Cài đặt
 
@@ -66,6 +74,8 @@ Trong Claude Code:
 | `observe` (mặc định) | Không hiện gì, chỉ ghi log. Xem trạng thái bằng `/qcd-status`. |
 | `warn` | Hiện cảnh báo `qcd-monitor: báo động ở step <k> của run (W = … > h = …, α = …)`, đồng thời thêm câu này vào ngữ cảnh của agent. |
 | `strict` | Dừng agent ngay, kèm lý do là câu cảnh báo trên. |
+
+Ở mọi chế độ, khi plugin không theo dõi đầy đủ (không nạp được model, hoặc không dùng được ruff 0.15.12), Claude Code hiện một thông báo bắt đầu bằng `qcd-monitor:`, mỗi sự cố một lần trong phiên. Thông báo này chỉ hiện cho bạn, không đưa vào ngữ cảnh của agent.
 
 ### Đổi chế độ hoặc α
 
@@ -96,6 +106,8 @@ qcd-monitor status: run 2, 14 step, W = 3.218, h = 15.664 (α = 0.1), báo độ
 | `h` | Ngưỡng báo động ứng với α đang chọn. |
 | `báo động` | `chưa`, hoặc step tại đó đã báo động. |
 | `model` | Tên model và 12 ký tự đầu của sha256 (xem [Dữ liệu train và điều khoản](#dữ-liệu-train-và-điều-khoản)). |
+
+Nếu trong phiên đã có sự cố (không nạp được model, không dùng được ruff), mỗi sự cố được ghi thêm thành một dòng dưới dòng trạng thái.
 
 ### Thử nhanh cả ba chế độ
 
@@ -138,10 +150,11 @@ Gửi một prompt có tool call, ví dụ "tạo file hello.py in ra hello rồ
 - **Khả năng phát hiện run thất bại:** ở α = `0.1`, kiểm định hoán vị cho p = 0,90. Dữ liệu không phân biệt được qcd-monitor với B0; hiện chưa có bằng chứng model phát hiện run thất bại tốt hơn quy tắc đếm step.
 - **Bản model trong plugin (seed 0):** tỷ lệ run thành công bị báo động là 7,5% ở α = `0.1`. Nếu tính trung bình theo task, tỷ lệ này là 12,0%, vượt α.
 - **Ngưỡng đóng gói** được hiệu chỉnh trên toàn bộ dữ liệu, nên không có ước lượng báo động giả trên dữ liệu chưa thấy cho chính ngưỡng này.
-- **Độ trễ của hook** (Windows 10, CPU Intel 8 luồng, phát lại 20.421 lần gọi hook):
+- **Độ trễ của hook** (bản 0.1.0; Windows 10, CPU Intel 8 luồng, phát lại 20.421 lần gọi hook):
   - trung vị khoảng 137 ms mỗi tool call; p95 là 176 ms, dưới ngân sách 200 ms;
   - riêng các lô có `Write`, p95 khoảng 190 ms, sát ngân sách;
   - B0 có p95 là 138 ms.
+- **Bản 0.2.0** cho điểm W trùng hoàn toàn với bản 0.1.0 và nạp model từ cache nhanh tương đương. Riêng lần gọi đầu tiên trên mỗi bản Python chậm hơn vài chục ms, do phải đọc `m1.json` và ghi cache (xem [CHANGELOG](CHANGELOG.md)).
 
 ## Dữ liệu lưu trên máy
 
@@ -158,6 +171,7 @@ Thư mục dữ liệu: `~/.claude/plugins/data/qcd-monitor-qcd-monitor/` (trên
   - prompt của run hiện tại;
   - output tool gần nhất, tối đa 20.000 ký tự;
   - các dòng lỗi, đường dẫn file, tập token của code và prompt.
+- **`cache/m1-<sha256 của model>-<bản Python>.bin`:** bản model do chính Python của bạn ghi, để nạp nhanh. Xóa được bất cứ lúc nào; hook tự tạo lại từ `m1.json`.
 - File state không được cập nhật quá 7 ngày sẽ tự bị xóa khi có prompt mới. Bạn có thể xóa cả thư mục dữ liệu bất cứ lúc nào.
 
 > [!CAUTION]
@@ -167,8 +181,11 @@ Thư mục dữ liệu: `~/.claude/plugins/data/qcd-monitor-qcd-monitor/` (trên
 
 | Triệu chứng | Nguyên nhân và cách xử lý |
 |---|---|
-| Hook gặp lỗi bên trong | Hook bỏ qua lỗi (fail-open): thoát bình thường, không in gì, không chặn agent, chỉ ghi tên lớp lỗi vào trường `error` của log. |
+| Hook gặp lỗi bên trong | Hook bỏ qua lỗi (fail-open): thoát bình thường, không chặn agent, chỉ ghi tên lớp lỗi vào trường `error` của log. |
+| Thông báo "không nạp được model" | Kiểm `python --version` là Python 3; xóa thư mục `cache/` trong thư mục dữ liệu; nếu vẫn lỗi, cập nhật plugin. Tên lớp lỗi nằm ở trường `error` của log. |
+| Thông báo "không dùng được ruff 0.15.12" | Cài đúng bản: `pip install ruff==0.15.12`, rồi mở phiên mới. |
 | `/qcd-status` không hiện dòng trạng thái | Kiểm `python --version`; kiểm plugin đang bật trong `/plugin`; xem dòng cuối của file log. |
+| Claude Code báo lỗi hook không tìm thấy `python` (macOS, Linux) | Cho `python` trỏ tới Python 3 (xem [Yêu cầu](#yêu-cầu)). |
 | Claude Code chặn mọi prompt sau khi thư mục cache plugin bị xóa giữa phiên | Script hook không còn, nên Python thoát với mã 2 và Claude Code chặn prompt. Tắt plugin (`/plugin`, tab **Installed**, chọn qcd-monitor rồi tắt), hoặc cập nhật plugin (**Update now**). |
 | ruff chạy chậm | Hook không có hạn chót bên trong. Lô nào vượt timeout 30 giây của hook sẽ bị Claude Code ngắt, và lô đó không được tính vào run. |
 
@@ -202,10 +219,7 @@ Thư mục dữ liệu: `~/.claude/plugins/data/qcd-monitor-qcd-monitor/` (trên
 - **Quy tắc chuyển đổi không có trong dữ liệu train:** cách chuyển tool call của Claude Code sang dạng model hiểu là quy tắc mới. Ví dụ, Edit hoặc Read bị chặn được coi là step lỗi (thêm tiền tố `ERROR:`), và output của Read được chuẩn hóa.
 - **Thiếu ruff 0.15.12** thì không còn đảm bảo về tỷ lệ báo động giả.
 - **Phạm vi theo dõi:** bỏ qua tool call bên trong subagent; chỉ dùng tool call, không dùng lời của agent; mới thử trên Windows.
-- **Phiên bản Python:** plugin mới chạy thử với Python 3.10.0 trên Windows 10; các bản cũ hơn hay mới hơn chưa được kiểm.
-  - Model được lưu bằng `marshal` của Python 3.10. Theo [tài liệu Python](https://docs.python.org/3/library/marshal.html), định dạng `marshal` có thể thay đổi giữa các phiên bản.
-  - Nếu Python của bạn không đọc được file model, hook bỏ qua lỗi (xem [Xử lý sự cố](#xử-lý-sự-cố)). Khi đó plugin không chấm điểm, không báo động và không hiện gì: trông như vẫn chạy nhưng thực ra không theo dõi.
-  - Cách nhận ra: sau một prompt có tool call, `/qcd-status` vẫn báo `0 step`, và trường `error` của dòng log `PostToolBatch` không rỗng.
+- **Phiên bản Python:** điểm W đã được kiểm là trùng nhau trên Python 3.10, 3.12 và 3.13 (Windows 10). Các bản khác chưa kiểm.
 
 ## Dữ liệu train và điều khoản
 
@@ -213,6 +227,6 @@ Thư mục dữ liệu: `~/.claude/plugins/data/qcd-monitor-qcd-monitor/` (trên
   - LightGBM trên 49 đặc trưng;
   - train trên CodeTraceBench (Hugging Face `NJU-LINK/CodeTraceBench`, revision `aa213b8`), gồm quỹ đạo của 6 model nguồn, đã bỏ các task trùng với Terminal-Bench 2;
   - dataset card ghi giấy phép MIT, nhưng repo dataset không có file LICENSE;
-  - sha256 của model: `acae504962b4352e6e59f4ee54cccaf57748c27cb787aa5bbb5d07c7046434bb`.
+  - sha256 của file model gốc (`m1_s0.bin` của run train): `acae504962b4352e6e59f4ee54cccaf57748c27cb787aa5bbb5d07c7046434bb`. Plugin phát hành chính model này ở dạng `m1.json`; khi xuất, cấu trúc cây được kiểm là trùng tuyệt đối với file gốc.
 - **Ngưỡng và đánh giá:** Hugging Face `harborframework/terminal-bench-2-leaderboard` (Apache-2.0), revision `572b261`, bài nộp `ClaudeCode__GLM-4.7`.
 - **Điều khoản:** điều khoản sử dụng output của các model nguồn **chưa được kiểm xong**. Vì vậy bản này chỉ dành cho dùng thử nội bộ, và repo đang để private. Mục này sẽ được cập nhật trước khi phát hành công khai.

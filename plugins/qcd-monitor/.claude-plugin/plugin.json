@@ -1,7 +1,8 @@
 {
   "name": "qcd-monitor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Giám sát online run của coding agent bằng CUSUM nhẹ trên 49 feature (không gọi LLM, chạy cục bộ).",
+  "author": {"name": "duypv"},
   "userConfig": {
     "mode": {"type": "string", "title": "Chế độ", "description": "observe: chỉ ghi log; warn: cảnh báo khi báo động; strict: dừng agent khi báo động",
              "options": ["observe", "warn", "strict"], "default": "observe"},

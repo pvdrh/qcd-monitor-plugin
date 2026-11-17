@@ -3,6 +3,7 @@
   "owner": {
     "name": "duypv"
   },
+  "description": "Marketplace c\u1ee7a plugin qcd-monitor",
   "plugins": [
     {
       "name": "qcd-monitor",
